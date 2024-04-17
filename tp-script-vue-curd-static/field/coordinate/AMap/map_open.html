@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>选择地点</title>
+</head>
+<body>
+<style>
+    body {
+        height: 100vh;
+        padding: 24px;
+    }
+
+    #app {
+        height: 100%;
+        width: 100%;
+        padding: 0 !important;
+        display: flex;
+        flex-direction: column;
+    }
+
+
+    .body {
+        flex: 1;
+    }
+
+    #map-container {
+        height: 100%;
+        width: 100%;
+    }
+
+
+    .amap-logo, .amap-copyright {
+        z-index: -1 !important;
+        opacity: 0 !important;
+        height: 0 !important;
+    }
+
+    .top {
+        padding: 12px 0px;
+        position: relative;
+    }
+
+
+    .search-rel {
+        position: absolute;
+        z-index: 999999;
+        background-color: #fff;
+        left: 0;
+        right: 0;
+        border-left: 1px solid #d9d9d9;
+        border-right: 1px solid #d9d9d9;
+        border-bottom-left-radius: 2px;
+        border-bottom-right-radius: 2px;
+        box-shadow: 0 3px 12px 0 rgba(0, 0, 0, .2);
+    }
+
+    .search-rel ul.search-rel-list {
+        padding: 0;
+        margin: 0 0 12px 0;
+        border-bottom: 1px solid #f5f5f5;
+    }
+
+    .search-rel .search-rel-list li {
+        list-style: none;
+        padding: 6px 12px;
+        cursor: pointer;
+        color: #8c8c8c;
+    }
+
+    .search-rel .search-rel-list li + li {
+        border-top: 1px dashed #efefef;
+    }
+
+    .search-rel .search-rel-list li:hover {
+        background-color: #fafafa;
+    }
+
+    .search-rel .search-rel-list li b {
+        padding-right: 12px;
+        color: #000;
+    }
+
+    .search-rel .arco-pagination {
+        margin-bottom: 8px;
+    }
+
+    .foot {
+        padding: 12px;
+        display: flex;
+    }
+
+    .foot .select-info {
+        flex: 1;
+    }
+</style>
+<div id="app" style="display: none">
+    <div class="top">
+        <div class="input-box" @click="relShow=relShow||(searchValue&&searchValue!=='')">
+            <a-input-search id="map-select-search-input" placeholder="输入关键字查找地区" v-model:model-value="searchValue" @press-enter="doSearch" @search="doSearch"></a-input-search>
+        </div>
+        <div class="search-rel" v-show="searchValue&&searchValue!==''&&relShow">
+            <div v-if="list.length>0">
+                <ul class="search-rel-list">
+                    <li v-for="item in list" @click="selectRel(item)"><b>{{ item.name }}</b>{{ item.address }}</li>
+                </ul>
+                <a-pagination size="small" v-model:current="page" :page-size="pageSize" :total="count"
+                              @change="pageChange"/>
+            </div>
+            <div v-else style="color: #d9d9d9;padding: 16px 24px">
+                (未找到相关信息)
+            </div>
+        </div>
+    </div>
+    <div class="body">
+        <div id="map-container"></div>
+    </div>
+    <div class="foot">
+        <div class="select-info">{{selectAddr}}</div>
+        <div class="check-btns">
+            <a-button type="primary" :disabled="selectMk===null" @click="selected">确认选中</a-button>
+        </div>
+    </div>
+</div>
+<script src="/tpscriptvuecurd/vue3/vue.global.prod.js?3.2.47" charset="utf-8"></script>
+<script src="/tpscriptvuecurd/arco/arco-vue.min.js?2.44.2" charset="utf-8"></script>
+<script src="/tpscriptvuecurd/arco/arco-vue-icon.min.js?2.44.2" charset="utf-8"></script>
+<script>
+    function getQueryVariable(variable)
+    {
+        let query = window.location.search.substring(1);
+        let vars = query.split("&");
+        for (let i=0;i<vars.length;i++) {
+            let pair = vars[i].split("=");
+            if(pair[0].toString() === variable.toString()){return pair[1];}
+        }
+        return false;
+    }
+    let searchRess = {};
+    //生成随机 GUID 数
+    window.guid = function () {
+        function S4() {
+            return (((1 + Math.random()) * 65536) | 0).toString(16).substring(1)
+        }
+
+        return (S4() + S4() + "-" + S4() + "-" + S4() + "-" + S4() + "-" + S4() + S4() + S4())
+    };
+    window.map = null;
+    window.placeSearch = null;
+    window.geocode = null;
+    const option = {
+        setup(props, ctx) {
+        },
+        data() {
+            return {
+                searchValue: null,
+                lastSearch: null,
+                list: [],
+                page: 1,
+                pageSize: 10,
+                count: 0,
+                relShow: false,
+                marker: null,
+                selectMk: null,
+                selectAddr: '',
+            }
+        },
+        watch: {
+            searchValue() {
+                this.doSearch()
+            },
+        },
+        mounted() {
+            let v= getQueryVariable('v');
+            ['/tpscriptvuecurd/arco/arco.min.css?v='+v,
+                '/tpscriptvuecurd/css/vue.css?v='+v,
+            ].forEach(val=>{
+                if(!val)return;
+                let styleEl = document.createElement('link');
+                styleEl.setAttribute('rel', 'stylesheet');
+                styleEl.setAttribute('media','all');
+                styleEl.setAttribute('href', val);
+                document.head.appendChild(styleEl);
+            })
+
+
+            document.getElementById('app').style.display = 'flex'
+
+            const initFunc = 'initializeBmap';
+            window[initFunc] = () => {
+                AMap.plugin(['AMap.Geocoder', 'AMap.PlaceSearch'], () => {//异步同时加载多个插件
+                    this.initMap()
+                })
+            };
+            window._AMapSecurityConfig = {
+                securityJsCode: '604a1f9d93f234478330d19b97908c51',
+            }
+
+            let jsapi = document.createElement('script');
+            jsapi.src = 'https://webapi.amap.com/maps?v=2.0&key=103028a8c0d4cbd05993f251c2a2ead7&&callback=' + initFunc + '&';
+            document.head.appendChild(jsapi);
+            document.addEventListener('click', e => {
+                if (e.target.closest('.search-rel') || e.target.matches('.search-rel') || e.target.closest('.input-box') || e.target.matches('.input-box')||(e.target.closest('li')&&e.target.closest('li').matches('.arco-pagination-item'))) {
+                    return;
+                }
+                this.relShow = false;
+            })
+
+        },
+        methods: {
+            initMap() {
+                let ct=getQueryVariable('center');
+                let defCenter = ct&&ct!==','?new AMap.LngLat(ct.split(',')[0], ct.split(',')[1]):new AMap.LngLat(120.12, 30.19);
+                //初始化地图对象
+                window.map = new AMap.Map('map-container', {
+                    layers: [
+                        // 卫星
+                        new AMap.TileLayer.Satellite(),
+                        // 路网
+                        new AMap.TileLayer.RoadNet()
+                    ],
+                    center: defCenter
+                });
+                //设置显示地图的中心点和级别
+                window.map.setZoomAndCenter(9, defCenter);  // 初始化地
+
+
+                const setMark = (lngLat) => {
+                    if (!this.selectMk) {
+                        this.selectMk = new AMap.Marker({
+                            position:lngLat
+                        }); // 创建点
+                        this.selectMk.setMap(window.map);
+                    }
+                    this.selectMk.setPosition(lngLat)
+                    window.map.setZoomAndCenter(18, lngLat);
+                    geocode.getAddress(lngLat, (status, rs) => {
+                        this.selectAddr = rs.regeocode.formattedAddress;
+                    })
+                }
+                window.geocode = new AMap.Geocoder();
+                window.map.on("click", e => {
+                    setMark(e.lnglat)
+                });
+
+                Vue.nextTick(() => {
+                    let that = this;
+
+                    function initMark() {
+                        let centerPoint = null;
+                        if (window.mapSelect) {
+                            const lnglat = window.mapSelect.split(',')
+                            centerPoint = new AMap.LngLat(lnglat[0], lnglat[1]);
+                            setMark(centerPoint)
+                        } else if (window.mapCenter) {
+                            centerPoint = new AMap.LngLat(window.mapCenter[0], window.mapCenter[1]);
+                            window.map.setZoomAndCenter(13, centerPoint);
+                        }
+                        that.mapInput(centerPoint);
+                    }
+
+                    if (window.mapSelect) {
+                        initMark();
+                    } else {
+                        window.initSelect = initMark;
+                    }
+                })
+            },
+            mapInput(center) {
+                geocode.getAddress(center, (status, rs) => {
+                    //创建搜索对象
+                    window.placeSearch = new AMap.PlaceSearch({
+                        city: rs.regeocode.addressComponent.city ? rs.regeocode.addressComponent.city : rs.regeocode.addressComponent.province,
+                        pageSize: 10, //每页结果数,默认10
+                    });
+                })
+            },
+            doSearch() {
+                if (this.searchValue===null||this.searchValue.replace(/\n/g, '') === '') {
+                    return;
+                }
+                window.placeSearch.setPageIndex(1)
+                this.setSearchData();
+            },
+            pageChange(page) {
+                window.placeSearch.setPageIndex(page)
+                this.setSearchData();
+            },
+            setSearchDataVal(result) {
+                if (!result.poiList) {
+                    if (this.page == 1) {
+                        this.count = 0;
+                        this.list = [];
+                    } else {
+                        this.page--;
+                        this.pageChange(this.page);
+                    }
+                } else {
+                    if (result.poiList.pois.length < 10 || (typeof searchRess[this.searchValue][this.page + 1] !== 'undefined' && (!searchRess[this.searchValue][this.page + 1].poiList || !searchRess[this.searchValue][this.page + 1].poiList.length))) {
+                        this.count = 10 * (this.page - 1) + result.poiList.pois.length;
+                    } else {
+                        this.count = result.poiList.count;
+                    }
+                    this.list = result.poiList.pois;
+                }
+                this.relShow = true;
+            },
+            setSearchData() {
+                searchRess[this.searchValue] = searchRess[this.searchValue] || {};
+                if (searchRess[this.searchValue][this.page]) {
+                    this.setSearchDataVal(searchRess[this.searchValue][this.page])
+                } else {
+                    window.placeSearch.search(this.searchValue, (status, result) => {
+                        searchRess[this.searchValue][this.page] = result;
+                        this.setSearchDataVal(result)
+                    });
+                }
+            },
+            selectRel(rel) {
+                window.map.setZoom(12);
+                const lngLat = rel.location;
+                if (!this.marker) {
+                    this.marker = new AMap.Marker({
+                        position: lngLat,
+                        icon: new AMap.Icon({
+                            image: 'https://webapi.amap.com/theme/v1.3/markers/n/mark_rs.png'
+                        })
+                    }); // 创建点
+                    this.marker.setMap(window.map);
+                }
+                this.marker.setPosition(lngLat)
+
+                window.map.setZoomAndCenter(18, lngLat);
+                this.relShow = false;
+            },
+
+            selected() {
+                if (this.selectMk === null) {
+                    return;
+                }
+                const lngLat = this.selectMk.getPosition();
+                window.onMapSelected(lngLat.lng + ',' + lngLat.lat)
+            }
+        }
+    };
+
+    window.app = Vue.createApp(option)
+    app.use(ArcoVue);
+    app.use(ArcoVueIcon);
+    app.mount('#app')
+</script>
+</body>
+</html>
